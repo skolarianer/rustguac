@@ -107,9 +107,41 @@ pub struct VncParams {
     pub dpi: u32,
     pub disable_copy: bool,
     pub disable_paste: bool,
+    /// Ask the VNC server to change its screen to the browser's size. Only
+    /// servers with their own virtual screen can (Xvnc, TigerVNC); a physical
+    /// console (UltraVNC, RealVNC, x11vnc) can't, and libvncclient then stops
+    /// requesting updates while it waits for a resize that never comes, so
+    /// the session all but freezes. Off, guacd scales the screen instead.
+    pub display_resize: bool,
+    /// How the VNC server should encode the screen for guacd: encodings in
+    /// order of preference, and Tight's zlib compression and JPEG quality
+    /// (0-9). `None` leaves libvncclient's defaults.
+    pub encodings: Option<String>,
+    pub compress_level: Option<u8>,
+    pub quality_level: Option<u8>,
     /// Wake-on-LAN parameters.
     pub wol: WolParams,
 }
+
+/// A VNC "network" preset, like UltraVNC Viewer's quick options: how to
+/// trade picture quality for bandwidth between the VNC server and guacd.
+/// Returns (encodings, compress level, quality level, colour depth to use
+/// when the connection doesn't set one). `None` for `auto` or an unknown
+/// name, which leave every setting at its default.
+pub fn vnc_network_preset(preset: &str) -> Option<(&'static str, u8, u8, Option<u8>)> {
+    match preset {
+        // Fast, lossless-looking: UltraVNC's own LZO encoding first.
+        "lan" => Some(("ultra zrle hextile copyrect raw", 1, 9, None)),
+        // Tight with JPEG for photos and video, moderate compression.
+        "wan" => Some(("tight zrle copyrect", 6, 6, None)),
+        // As little bandwidth as possible.
+        "slow" => Some(("tight copyrect", 9, 3, Some(16))),
+        _ => None,
+    }
+}
+
+/// The preset names `vnc_network_preset` knows, `auto` included.
+pub const VNC_NETWORK_PRESETS: &[&str] = &["auto", "lan", "wan", "slow"];
 
 /// SPICE connection parameters to pass to guacd.
 ///
@@ -156,6 +188,36 @@ impl SpiceParams {
         } else {
             self.port
         }
+    }
+}
+
+/// The value guacd gets for one VNC argument.
+fn vnc_arg_value(name: &str, p: &VncParams) -> String {
+    match name {
+        "hostname" => p.hostname.clone(),
+        "port" => p.port.to_string(),
+        "width" => p.width.to_string(),
+        "height" => p.height.to_string(),
+        "dpi" => p.dpi.to_string(),
+        "username" => p.username.clone().unwrap_or_default(),
+        "password" => p.password.clone().unwrap_or_default(),
+        "color-depth" => p.color_depth.map_or("24".into(), |d| d.to_string()),
+        "cursor" => "local".into(),
+        "read-only" => "false".into(),
+        "swap-red-blue" => "false".into(),
+        "dest-host" => String::new(),
+        "dest-port" => String::new(),
+        "enable-audio" => "false".into(),
+        "disable-copy" => if p.disable_copy { "true" } else { "false" }.into(),
+        "disable-paste" => if p.disable_paste { "true" } else { "false" }.into(),
+        "disable-display-resize" => if p.display_resize { "false" } else { "true" }.into(),
+        "encodings" => p.encodings.clone().unwrap_or_default(),
+        "compress-level" => p.compress_level.map(|v| v.to_string()).unwrap_or_default(),
+        "quality-level" => p.quality_level.map(|v| v.to_string()).unwrap_or_default(),
+        _ => wol_arg_value(name, &p.wol).unwrap_or_else(|| {
+            tracing::debug!("Unknown guacd VNC parameter '{}', sending empty", name);
+            String::new()
+        }),
     }
 }
 
@@ -389,28 +451,7 @@ pub async fn connect_and_handshake(
                     String::new()
                 }),
             },
-            ConnectionParams::Vnc(p) => match name.as_str() {
-                "hostname" => p.hostname.clone(),
-                "port" => p.port.to_string(),
-                "width" => p.width.to_string(),
-                "height" => p.height.to_string(),
-                "dpi" => p.dpi.to_string(),
-                "username" => p.username.clone().unwrap_or_default(),
-                "password" => p.password.clone().unwrap_or_default(),
-                "color-depth" => p.color_depth.map_or("24".into(), |d| d.to_string()),
-                "cursor" => "local".into(),
-                "read-only" => "false".into(),
-                "swap-red-blue" => "false".into(),
-                "dest-host" => String::new(),
-                "dest-port" => String::new(),
-                "enable-audio" => "false".into(),
-                "disable-copy" => if p.disable_copy { "true" } else { "false" }.into(),
-                "disable-paste" => if p.disable_paste { "true" } else { "false" }.into(),
-                _ => wol_arg_value(name, &p.wol).unwrap_or_else(|| {
-                    tracing::debug!("Unknown guacd VNC parameter '{}', sending empty", name);
-                    String::new()
-                }),
-            },
+            ConnectionParams::Vnc(p) => vnc_arg_value(name.as_str(), p),
             ConnectionParams::Rdp(p) => match name.as_str() {
                 "hostname" => p.hostname.clone(),
                 "port" => p.port.to_string(),
@@ -739,6 +780,61 @@ mod tests {
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn vnc(display_resize: bool) -> VncParams {
+        VncParams {
+            hostname: "192.0.2.10".into(),
+            port: 5900,
+            username: None,
+            password: None,
+            color_depth: None,
+            width: 2560,
+            height: 1266,
+            dpi: 96,
+            disable_copy: false,
+            disable_paste: false,
+            display_resize,
+            encodings: None,
+            compress_level: None,
+            quality_level: None,
+            wol: WolParams::default(),
+        }
+    }
+
+    #[test]
+    fn vnc_network_presets_set_encodings_compression_and_quality() {
+        // Auto (no preset): every one empty, so guacd keeps libvncclient's
+        // own defaults.
+        let p = vnc(false);
+        for arg in ["encodings", "compress-level", "quality-level"] {
+            assert_eq!(vnc_arg_value(arg, &p), "", "{arg}");
+        }
+        let (enc, compress, quality, depth) = vnc_network_preset("slow").unwrap();
+        let mut p = vnc(false);
+        p.encodings = Some(enc.into());
+        p.compress_level = Some(compress);
+        p.quality_level = Some(quality);
+        assert_eq!(vnc_arg_value("encodings", &p), "tight copyrect");
+        assert_eq!(vnc_arg_value("compress-level", &p), "9");
+        assert_eq!(vnc_arg_value("quality-level", &p), "3");
+        assert_eq!(depth, Some(16));
+        // Every listed preset other than auto resolves; anything else doesn't.
+        for name in VNC_NETWORK_PRESETS.iter().filter(|n| **n != "auto") {
+            let (enc, c, q, _) = vnc_network_preset(name).unwrap();
+            assert!(!enc.is_empty() && c <= 9 && q <= 9, "{name}");
+        }
+        assert!(vnc_network_preset("auto").is_none());
+        assert!(vnc_network_preset("modem").is_none());
+    }
+
+    #[test]
+    fn vnc_display_resize_is_off_unless_asked() {
+        // A physical console can't resize, and libvncclient then stops asking
+        // for updates while it waits: guacd must be told not to try.
+        assert_eq!(vnc_arg_value("disable-display-resize", &vnc(false)), "true");
+        assert_eq!(vnc_arg_value("disable-display-resize", &vnc(true)), "false");
+        assert_eq!(vnc_arg_value("hostname", &vnc(false)), "192.0.2.10");
     }
 
     #[test]

@@ -159,6 +159,8 @@ pub async fn cmd_import_guacamole(
             login_script: None,
             autofill: None,
             allowed_domains: None,
+            vnc_resize: None,
+            vnc_network: None,
             disable_copy: None,
             disable_paste: None,
             banner: None,
