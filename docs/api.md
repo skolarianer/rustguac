@@ -98,6 +98,24 @@ The response includes the public key in the `banner_text` field. The SSH connect
 }
 ```
 
+**RDP session through an RD Gateway:**
+
+```json
+{
+  "session_type": "rdp",
+  "hostname": "workstation.internal",
+  "port": 3389,
+  "gateway_hostname": "gateway.example.com",
+  "gateway_port": 443,
+  "gateway_username": "alice",
+  "gateway_password": "gateway-secret",
+  "gateway_domain": "EXAMPLE",
+  "load_balance_info": "tsv://MS Terminal Services Plugin.1.Terminal"
+}
+```
+
+`gateway_port` defaults to 443. When a gateway is configured, the RDP target is resolved from the gateway side, so rustguac does not resolve or check the inner target against its local RDP allowlist. For non-admin ad-hoc sessions, the gateway itself must resolve inside `rdp_allowed_networks`.
+
 **RDP session with Kerberos NLA:**
 
 ```json
@@ -212,6 +230,12 @@ The `jump_hosts` array defines an ordered chain of SSH bastion hops. Each hop co
 | `generate_keypair` | boolean | SSH | Generate an ephemeral Ed25519 keypair |
 | `url` | string | Web | Target URL for web browser session |
 | `domain` | string | RDP | Windows domain |
+| `gateway_hostname` | string | RDP | RD Gateway host |
+| `gateway_port` | integer | RDP | RD Gateway port (default 443) |
+| `gateway_username` | string | RDP | RD Gateway username |
+| `gateway_password` | string | RDP | RD Gateway password |
+| `gateway_domain` | string | RDP | RD Gateway domain |
+| `load_balance_info` | string | RDP | RDS Connection Broker load-balance cookie |
 | `security` | string | RDP | `tls`, `nla`, or `rdp` |
 | `ignore_cert` | boolean | RDP | Ignore TLS certificate errors |
 | `auth_pkg` | string | RDP | NLA auth package: `kerberos`, `ntlm`, or empty (negotiate) |
@@ -642,6 +666,12 @@ Create a connection entry. The body includes a `name` field plus all entry field
 | `private_key` | string | SSH | OpenSSH PEM private key |
 | `url` | string | Web | Target URL |
 | `domain` | string | RDP | Windows domain |
+| `gateway_hostname` | string | RDP | RD Gateway host |
+| `gateway_port` | integer | RDP | RD Gateway port (default 443) |
+| `gateway_username` | string | RDP | RD Gateway username |
+| `gateway_password` | string | RDP | RD Gateway password |
+| `gateway_domain` | string | RDP | RD Gateway domain |
+| `load_balance_info` | string | RDP | RDS Connection Broker load-balance cookie |
 | `security` | string | RDP | Security mode |
 | `ignore_cert` | boolean | RDP | Ignore certificate errors |
 | `auth_pkg` | string | RDP | NLA auth package |
