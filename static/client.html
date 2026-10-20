@@ -426,6 +426,8 @@
         // Per-entry autohide of the clipboard/files side tabs; populated from
         // the same /api/sessions/:id fetch and read when the tabs are built.
         var wantAutohideTabs = false;
+        // Populated from session info before the guacd connection starts.
+        var wantFileManager = false;
 
         fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
             var siteTitle = d.site_title || 'rustguac';
@@ -479,7 +481,10 @@
         } else if (shareToken) {
             fetch('/api/sessions/' + sessionId + '/banner?token=' + encodeURIComponent(shareToken))
             .then(function(res) { return res.ok ? res.json() : null; })
-            .then(function(data) { return showBanner(data && data.banner); })
+            .then(function(data) {
+                wantFileManager = data && data.file_manager_enabled === true;
+                return showBanner(data && data.banner);
+            })
             .then(function() { startGuacamole(); })
             .catch(function() { startGuacamole(); });
         } else {
@@ -502,6 +507,7 @@
                 if (session && session.fullscreen_on_connect && !embedded && !windowed) wantFullscreen = true;
                 bitmapSession = !!(session && (session.session_type === 'rdp' || session.session_type === 'vnc'));
                 if (session && session.autohide_side_tabs) wantAutohideTabs = true;
+                wantFileManager = session && session.file_manager_enabled === true;
                 return showBanner(session.banner);
             })
             .then(function() { startGuacamole(); })
@@ -1477,6 +1483,7 @@
 
             // ── Filesystem handler (fires when drive/SFTP is available) ──
             client.onfilesystem = function(object, name) {
+                if (!wantFileManager) return;
                 filesystem = object;
                 tracing_log('Filesystem available: ' + name);
                 // Show file manager tab
@@ -1490,9 +1497,37 @@
 
             // ── File download handler (server-initiated file transfer) ──
             client.onfile = function(stream, mimetype, filename) {
+                var isPrintJob = /^application\/pdf(?:\s*;|$)/i.test(mimetype || '');
                 var reader = new Guacamole.BlobReader(stream, mimetype);
                 reader.onend = function() {
                     var blob = reader.getBlob();
+                    if (isPrintJob) {
+                        var printUrl = URL.createObjectURL(blob);
+                        var frame = document.createElement('iframe');
+                        frame.style.display = 'none';
+                        document.body.appendChild(frame);
+                        frame.onload = function() {
+                            setTimeout(function() {
+                                frame.focus();
+                                frame.contentWindow.print();
+                            }, 1);
+                        };
+                        frame.src = printUrl;
+                        setTimeout(function() {
+                            if (frame.parentNode) frame.parentNode.removeChild(frame);
+                            URL.revokeObjectURL(printUrl);
+                        }, 60000);
+                        fetch('/api/sessions/' + sessionId + '/print-job', {
+                            method: 'POST',
+                            headers: Object.assign({ 'Content-Type': 'application/json' }, fetchHeaders),
+                            credentials: 'same-origin',
+                            body: JSON.stringify({
+                                filename: filename || 'print-job.pdf',
+                                token: shareToken || undefined
+                            })
+                        }).catch(function() {});
+                        return;
+                    }
                     var a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
                     a.download = filename;

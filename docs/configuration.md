@@ -233,6 +233,15 @@ Enables file transfer for RDP (drive redirection) and SSH (SFTP).
 | `luks_name` | `rustguac-drives` | Device-mapper name |
 | `luks_key_path` | — | Vault KV path for LUKS encryption key |
 
+## `[rdp]` section
+
+RDP-specific defaults and administrative policy.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `default_auth_pkg` | `ntlm` | NLA/CredSSP authentication package (`ntlm`, `kerberos`, or `negotiate`) |
+| `allow_printing` | `false` | Allow RDP printer redirection. Print jobs deliver remote data to the browser, so this administrator-controlled policy applies even when file downloads are disabled. |
+
 ## `[theme]` section
 
 Customises the UI appearance — base preset, individual colours, and logo. All fields are optional. A minimal example:

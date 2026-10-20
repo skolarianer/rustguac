@@ -19,8 +19,8 @@ mod vdi;
 mod websocket;
 
 use crate::api::{
-    AppState, CredentialDefaultScope, DriveConfigured, OidcEnabled, OidcHandle, SiteTitle,
-    ThemeData, VaultBackends, VaultCell, VaultConfigured, VaultState,
+    AppState, CredentialDefaultScope, DriveConfigured, OidcEnabled, OidcHandle, RdpPrintingAllowed,
+    SiteTitle, ThemeData, VaultBackends, VaultCell, VaultConfigured, VaultState,
 };
 use crate::config::Config;
 use crate::db::Db;
@@ -752,6 +752,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
     style-src 'self' 'unsafe-inline'; \
     connect-src 'self' wss: ws:; \
     img-src 'self' data: blob:; \
+    frame-src 'self' blob:; \
     frame-ancestors 'none'";
 
 /// The policy for the one page that may be framed, and only by our own
@@ -764,6 +765,7 @@ const FRAMEABLE_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
     style-src 'self' 'unsafe-inline'; \
     connect-src 'self' wss: ws:; \
     img-src 'self' data: blob:; \
+    frame-src 'self' blob:; \
     frame-ancestors 'self'";
 
 /// Response marker set by `serve_client_page` when that session's client may
@@ -1006,6 +1008,8 @@ async fn run_server(config: Config, database: Db) {
         configured: config.drive.is_some(),
         enabled: config.drive.as_ref().is_some_and(|d| d.enabled),
     };
+    let rdp_printing_allowed =
+        RdpPrintingAllowed(config.rdp.as_ref().is_some_and(|rdp| rdp.allow_printing));
     let site_title = SiteTitle(config.site_title.clone());
     let theme_data = {
         // Load built-in themes merged with any user themes from
@@ -1547,8 +1551,10 @@ async fn run_server(config: Config, database: Db) {
         .route("/api/health", get(api::health))
         .route("/api/docs", get(api::get_docs))
         .route("/api/sessions/{id}/banner", get(api::get_session_banner))
+        .route("/api/sessions/{id}/print-job", post(api::log_print_job))
         .route("/client/{session_id}", get(serve_client_page))
-        .with_state(manager);
+        .with_state(manager)
+        .layer(middleware::from_fn(auth::optional_auth));
 
     // Branded HTML page routes (served from memory with site_title/logo baked in)
     let html_routes = Router::new()
@@ -1628,6 +1634,7 @@ async fn run_server(config: Config, database: Db) {
         .layer(Extension(oidc_enabled))
         .layer(Extension(OidcHandle(oidc_state.clone())))
         .layer(Extension(drive_configured))
+        .layer(Extension(rdp_printing_allowed))
         .layer(Extension(site_title))
         .layer(Extension(theme_data))
         .layer(Extension(trusted_proxies))
@@ -2210,6 +2217,12 @@ mod tests {
         assert!(sources.contains(&"'self'"), "img-src must allow 'self'");
         assert!(sources.contains(&"data:"), "img-src must allow data: URIs");
         assert!(sources.contains(&"blob:"), "img-src must allow blob: URLs");
+        let frame_src = directives
+            .iter()
+            .find(|d| d.starts_with("frame-src "))
+            .expect("CSP must allow the hidden PDF frame used for printing");
+        let frame_sources: Vec<&str> = frame_src.split_whitespace().skip(1).collect();
+        assert!(frame_sources.contains(&"blob:"));
         // The string continuation must not leave stray whitespace runs.
         assert!(!CONTENT_SECURITY_POLICY.contains("  "));
         assert!(!CONTENT_SECURITY_POLICY.contains('\n'));
