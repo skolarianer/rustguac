@@ -1153,7 +1153,7 @@
             <div id="em-printing-section" style="display:none;margin-top:0.8em;">
                 <label>
                     <input type="checkbox" id="em-enable-printing" style="display:inline;width:auto;margin-right:0.4em"> Enable printer redirection
-                    <div style="color:#888;font-size:0.75em;margin-top:0.2em;">Print jobs open your browser's local print dialog without displaying the PDF. An administrator must enable <code>rdp.allow_printing</code>; the guacd host needs Ghostscript.</div>
+                    <div style="color:#888;font-size:0.75em;margin-top:0.2em;">Print jobs are delivered as PDF downloads or through the browser's local print dialog, depending on the administrator's <code>rdp.printing_method</code> setting. An administrator must enable <code>rdp.allow_printing</code>; the guacd host needs Ghostscript.</div>
                 </label>
                 <label>Printer name
                     <input type="text" id="em-printer-name" placeholder="rustguac" maxlength="64">

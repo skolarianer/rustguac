@@ -413,6 +413,9 @@ pub struct SessionInfo {
     /// Whether the browser should expose the session's file transfer drive.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub file_manager_enabled: bool,
+    /// Browser delivery method for enabled RDP printer redirection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub printing_method: Option<crate::config::RdpPrintingMethod>,
 }
 
 /// Internal session state including the guacd connection.
@@ -489,6 +492,8 @@ pub struct Session {
     pub file_manager_enabled: bool,
     /// Whether this session has RDP printer redirection enabled.
     pub printing_enabled: bool,
+    /// Browser delivery method, set only when printer redirection is enabled.
+    pub printing_method: Option<crate::config::RdpPrintingMethod>,
 }
 
 /// A short-lived viewer token issued by an admin to shadow an active session.
@@ -577,6 +582,7 @@ mod auth_pkg_tests {
             rdp: Some(crate::config::RdpConfig {
                 default_auth_pkg: default_auth_pkg.map(|s| s.to_string()),
                 allow_printing: false,
+                printing_method: crate::config::RdpPrintingMethod::default(),
             }),
             ..Config::default()
         }
@@ -857,6 +863,7 @@ impl Session {
             fullscreen_on_connect: self.fullscreen_on_connect,
             autohide_side_tabs: self.autohide_side_tabs,
             file_manager_enabled: self.file_manager_enabled,
+            printing_method: self.printing_method,
         }
     }
 }
@@ -1076,6 +1083,7 @@ impl SessionManager {
         // proxy hops); merged into the session's tunnel list after the match.
         let mut proxmox_tunnels: Vec<tunnel::SshTunnel> = Vec::new();
         let mut printing_enabled = false;
+        let mut printing_method = None;
 
         let (
             mut conn_params,
@@ -1254,6 +1262,15 @@ impl SessionManager {
                     .as_ref()
                     .is_some_and(|rdp| rdp.allow_printing);
                 printing_enabled = printing_requested && printing_allowed;
+                if printing_enabled {
+                    printing_method = Some(
+                        self.config
+                            .rdp
+                            .as_ref()
+                            .map(|rdp| rdp.printing_method)
+                            .unwrap_or_default(),
+                    );
+                }
                 if printing_requested && !printing_allowed {
                     tracing::info!(%session_id, "Ignoring RDP printer redirection request because rdp.allow_printing is disabled");
                 }
@@ -2183,6 +2200,7 @@ impl SessionManager {
             autohide_side_tabs: req.autohide_side_tabs.unwrap_or(false),
             file_manager_enabled,
             printing_enabled,
+            printing_method,
         };
 
         let info = session.info();
@@ -2295,7 +2313,7 @@ impl SessionManager {
 
     /// Return the session properties used to select client-page CSP policy:
     /// fullscreen framing setting, whether it came from an address-book
-    /// entry, and whether RDP printer redirection is enabled.
+    /// entry, and whether print-dialog frame access is required.
     pub async fn get_session_client_csp_flags(&self, id: Uuid) -> Option<(bool, bool, bool)> {
         let sessions = self.sessions.read().await;
         let session = sessions.get(&id)?;
@@ -2303,7 +2321,8 @@ impl SessionManager {
         Some((
             session.fullscreen_on_connect,
             session.address_book_entry.is_some(),
-            session.printing_enabled,
+            session.printing_enabled
+                && session.printing_method == Some(crate::config::RdpPrintingMethod::TriggerPrint),
         ))
     }
 
@@ -3506,6 +3525,7 @@ mod tests {
             autohide_side_tabs: false,
             file_manager_enabled: true,
             printing_enabled: false,
+            printing_method: None,
         }
     }
 

@@ -428,6 +428,7 @@
         var wantAutohideTabs = false;
         // Populated from session info before the guacd connection starts.
         var wantFileManager = false;
+        var printingMethod = 'download';
 
         fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
             var siteTitle = d.site_title || 'rustguac';
@@ -483,6 +484,7 @@
             .then(function(res) { return res.ok ? res.json() : null; })
             .then(function(data) {
                 wantFileManager = data && data.file_manager_enabled === true;
+                printingMethod = data && data.printing_method || 'download';
                 return showBanner(data && data.banner);
             })
             .then(function() { startGuacamole(); })
@@ -508,6 +510,7 @@
                 bitmapSession = !!(session && (session.session_type === 'rdp' || session.session_type === 'vnc'));
                 if (session && session.autohide_side_tabs) wantAutohideTabs = true;
                 wantFileManager = session && session.file_manager_enabled === true;
+                printingMethod = session && session.printing_method || 'download';
                 return showBanner(session.banner);
             })
             .then(function() { startGuacamole(); })
@@ -1501,7 +1504,7 @@
                 var reader = new Guacamole.BlobReader(stream, mimetype);
                 reader.onend = function() {
                     var blob = reader.getBlob();
-                    if (isPrintJob) {
+                    if (isPrintJob && printingMethod === 'trigger_print') {
                         var printUrl = URL.createObjectURL(blob);
                         var frame = document.createElement('iframe');
                         frame.style.display = 'none';
@@ -1530,12 +1533,25 @@
                     }
                     var a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
-                    a.download = filename;
+                    a.download = filename || (isPrintJob ? 'print-job.pdf' : 'download');
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
                     setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
-                    setFileStatus('Received file: ' + filename);
+                    if (isPrintJob) {
+                        fetch('/api/sessions/' + sessionId + '/print-job', {
+                            method: 'POST',
+                            headers: Object.assign({ 'Content-Type': 'application/json' }, fetchHeaders),
+                            credentials: 'same-origin',
+                            body: JSON.stringify({
+                                filename: filename || 'print-job.pdf',
+                                token: shareToken || undefined
+                            })
+                        }).catch(function() {});
+                        setFileStatus('Received print job: ' + (filename || 'print-job.pdf'));
+                    } else {
+                        setFileStatus('Received file: ' + filename);
+                    }
                 };
             };
 

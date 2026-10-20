@@ -72,6 +72,7 @@ const ctx = {
     URL: { createObjectURL: () => 'blob:print-job', revokeObjectURL() {} },
     window: {},
     sessionId: 'session-id',
+    printingMethod: 'trigger_print',
     shareToken: null,
     fetchHeaders: {},
     fetch(url, options) { printLogs.push({ url, options }); return Promise.resolve(); },
@@ -99,6 +100,13 @@ assert.equal(downloads.length, 0, 'the print PDF should not be downloaded');
 assert.equal(printLogs.length, 1);
 assert.equal(printLogs[0].url, '/api/sessions/session-id/print-job');
 assert.deepEqual(JSON.parse(printLogs[0].options.body), { filename: 'C:\\print\\invoice' });
+
+ctx.printingMethod = 'download';
+client.onfile({}, 'application/pdf', 'C:\\print\\report');
+reader.onend();
+assert.deepEqual(downloads.at(-1), { href: 'blob:print-job', filename: 'C:\\print\\report' }, 'download mode should save the print PDF');
+assert.equal(iframePrintCalls, 1, 'download mode must not invoke the local print dialog');
+assert.equal(printLogs.length, 2, 'print jobs should be logged in either delivery mode');
 
 client.onfile({}, 'text/plain', 'notes.txt');
 reader.onend();

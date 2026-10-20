@@ -241,6 +241,7 @@ RDP-specific defaults and administrative policy.
 |-----|---------|-------------|
 | `default_auth_pkg` | `ntlm` | NLA/CredSSP authentication package (`ntlm`, `kerberos`, or `negotiate`) |
 | `allow_printing` | `false` | Allow RDP printer redirection. Print jobs deliver remote data to the browser, so this administrator-controlled policy applies even when file downloads are disabled. |
+| `printing_method` | `download` | How the browser handles print PDFs: `download` saves the PDF as a file; `trigger_print` opens the browser's local print dialog. The latter adds a `blob:` frame allowance only to print-enabled client pages. |
 
 ## `[theme]` section
 

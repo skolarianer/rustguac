@@ -2028,6 +2028,7 @@ pub async fn get_session_banner(
         Some(info) => Json(json!({
             "banner": info.banner,
             "file_manager_enabled": info.file_manager_enabled,
+            "printing_method": info.printing_method,
         }))
         .into_response(),
         None => (

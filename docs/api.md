@@ -219,7 +219,7 @@ The `jump_hosts` array defines an ordered chain of SSH bastion hops. Each hop co
 | `kerberos_cache` | string | RDP | Path to Kerberos credential cache (advanced) |
 | `color_depth` | integer | RDP | Color depth in bits (8, 16, 24, 32) |
 | `enable_drive` | boolean | RDP, SSH | Enable file transfer / drive redirection |
-| `enable_printing` | boolean | RDP | Request printer redirection. The administrator must enable `rdp.allow_printing`; otherwise the request is ignored. Print jobs open the browser's local print dialog without displaying the PDF. This uses a separate RDP device and does not require drive file transfer. |
+| `enable_printing` | boolean | RDP | Request printer redirection. The administrator must enable `rdp.allow_printing`; otherwise the request is ignored. Print PDFs are downloaded by default; setting `rdp.printing_method = "trigger_print"` opens the browser's local print dialog without displaying the PDF. This uses a separate RDP device and does not require drive file transfer. |
 | `printer_name` | string | RDP | Name shown for the redirected printer (used only when `enable_printing` is true) |
 | `disable_copy` | boolean | All | Disable clipboard copy (server → client) |
 | `disable_paste` | boolean | All | Disable clipboard paste (client → server) |

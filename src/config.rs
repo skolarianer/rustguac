@@ -626,6 +626,20 @@ pub struct RdpConfig {
     /// carry remote data to the browser even when file downloads are disabled.
     #[serde(default)]
     pub allow_printing: bool,
+    /// How the browser receives redirected print jobs. `download` saves the
+    /// PDF as a file; `trigger_print` opens the browser's local print dialog.
+    /// Default: download.
+    #[serde(default)]
+    pub printing_method: RdpPrintingMethod,
+}
+
+/// Browser delivery behavior for RDP print jobs.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RdpPrintingMethod {
+    #[default]
+    Download,
+    TriggerPrint,
 }
 
 /// Fully-resolved theme palette with all 26 color fields.
@@ -1494,6 +1508,10 @@ mod tests {
     #[test]
     fn printer_redirection_is_disabled_by_default() {
         assert!(!RdpConfig::default().allow_printing);
+        assert_eq!(
+            RdpConfig::default().printing_method,
+            RdpPrintingMethod::Download
+        );
     }
 
     #[test]
