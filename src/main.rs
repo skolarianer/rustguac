@@ -746,13 +746,13 @@ struct TlsEnabled(bool);
 /// No page may be framed (`frame-ancestors 'none'`, `X-Frame-Options: DENY`):
 /// a framed rustguac page, above all a live session, would take the clicks
 /// and keystrokes of whoever is fooled into using it. The one exception is
-/// `FRAMEABLE_CONTENT_SECURITY_POLICY` below.
+/// `FRAMEABLE_CONTENT_SECURITY_POLICY` below. The separate `frame-src blob:`
+/// exception is applied only to client pages for sessions with printing on.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
     script-src 'self' 'unsafe-inline'; \
     style-src 'self' 'unsafe-inline'; \
     connect-src 'self' wss: ws:; \
     img-src 'self' data: blob:; \
-    frame-src 'self' blob:; \
     frame-ancestors 'none'";
 
 /// The policy for the one page that may be framed, and only by our own
@@ -761,6 +761,26 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
 /// iframe so the tab can go fullscreen on the Connect click (#257). See
 /// `ClientFrameable` and docs/security.md.
 const FRAMEABLE_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
+    script-src 'self' 'unsafe-inline'; \
+    style-src 'self' 'unsafe-inline'; \
+    connect-src 'self' wss: ws:; \
+    img-src 'self' data: blob:; \
+    frame-ancestors 'self'";
+
+/// A print-enabled client loads the generated PDF from a blob URL in a hidden
+/// iframe to invoke the browser's print dialog. Keep this permission off
+/// ordinary pages and add it only to that session's client response.
+const PRINTABLE_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
+    script-src 'self' 'unsafe-inline'; \
+    style-src 'self' 'unsafe-inline'; \
+    connect-src 'self' wss: ws:; \
+    img-src 'self' data: blob:; \
+    frame-src 'self' blob:; \
+    frame-ancestors 'none'";
+
+/// Combined policy for a print-enabled client opened in the same-origin
+/// fullscreen iframe.
+const FRAMEABLE_PRINTABLE_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
     script-src 'self' 'unsafe-inline'; \
     style-src 'self' 'unsafe-inline'; \
     connect-src 'self' wss: ws:; \
@@ -774,6 +794,10 @@ const FRAMEABLE_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
 #[derive(Clone, Copy)]
 struct ClientFrameable;
 
+/// Response marker set only when this session enabled RDP printer redirection.
+#[derive(Clone, Copy)]
+struct ClientPrintable;
+
 async fn security_headers(
     tls: Extension<TlsEnabled>,
     request: Request,
@@ -781,10 +805,13 @@ async fn security_headers(
 ) -> Response {
     let mut response = next.run(request).await;
     let frameable = response.extensions().get::<ClientFrameable>().is_some();
-    let (frame_options, csp) = if frameable {
-        ("SAMEORIGIN", FRAMEABLE_CONTENT_SECURITY_POLICY)
-    } else {
-        ("DENY", CONTENT_SECURITY_POLICY)
+    let printable = response.extensions().get::<ClientPrintable>().is_some();
+    let frame_options = if frameable { "SAMEORIGIN" } else { "DENY" };
+    let csp = match (frameable, printable) {
+        (false, false) => CONTENT_SECURITY_POLICY,
+        (true, false) => FRAMEABLE_CONTENT_SECURITY_POLICY,
+        (false, true) => PRINTABLE_CONTENT_SECURITY_POLICY,
+        (true, true) => FRAMEABLE_PRINTABLE_CONTENT_SECURITY_POLICY,
     };
     let headers = response.headers_mut();
     headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
@@ -2044,15 +2071,17 @@ async fn serve_client_page(
         // Unreachable: the map always carries the embedded copy.
         None => Html(include_str!("../static/client.html")).into_response(),
     };
-    let session = match uuid::Uuid::parse_str(&session_id) {
-        Ok(id) => manager.get_session(id).await,
+    let client_csp_flags = match uuid::Uuid::parse_str(&session_id) {
+        Ok(id) => manager.get_session_client_csp_flags(id).await,
         Err(_) => None,
     };
-    if session
-        .as_ref()
-        .is_some_and(|s| client_frameable(s.fullscreen_on_connect, s.address_book_entry.is_some()))
-    {
-        response.extensions_mut().insert(ClientFrameable);
+    if let Some((fullscreen_on_connect, from_entry, printing_enabled)) = client_csp_flags {
+        if client_frameable(fullscreen_on_connect, from_entry) {
+            response.extensions_mut().insert(ClientFrameable);
+        }
+        if printing_enabled {
+            response.extensions_mut().insert(ClientPrintable);
+        }
     }
     response
 }
@@ -2150,6 +2179,23 @@ mod tests {
             rest(CONTENT_SECURITY_POLICY),
             rest(FRAMEABLE_CONTENT_SECURITY_POLICY)
         );
+        let frame_src = |csp: &str| {
+            csp.split(';')
+                .map(str::trim)
+                .find(|d| d.starts_with("frame-src "))
+                .expect("print-enabled CSP must define frame-src")
+                .to_string()
+        };
+        assert!(!CONTENT_SECURITY_POLICY.contains("frame-src "));
+        assert!(!FRAMEABLE_CONTENT_SECURITY_POLICY.contains("frame-src "));
+        assert_eq!(
+            frame_src(PRINTABLE_CONTENT_SECURITY_POLICY),
+            "frame-src 'self' blob:"
+        );
+        assert_eq!(
+            frame_src(FRAMEABLE_PRINTABLE_CONTENT_SECURITY_POLICY),
+            "frame-src 'self' blob:"
+        );
     }
 
     #[test]
@@ -2178,6 +2224,23 @@ mod tests {
                     r
                 }),
             )
+            .route(
+                "/print-client",
+                get(|| async {
+                    let mut r = "x".into_response();
+                    r.extensions_mut().insert(ClientPrintable);
+                    r
+                }),
+            )
+            .route(
+                "/frame-print-client",
+                get(|| async {
+                    let mut r = "x".into_response();
+                    r.extensions_mut().insert(ClientFrameable);
+                    r.extensions_mut().insert(ClientPrintable);
+                    r
+                }),
+            )
             .layer(middleware::from_fn(security_headers))
             .layer(Extension(TlsEnabled(false)));
         let get_headers = |path: &'static str| {
@@ -2196,12 +2259,32 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("frame-ancestors 'none'"));
+        assert!(!plain["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("frame-src "));
         let client = get_headers("/client").await;
         assert_eq!(client["x-frame-options"], "SAMEORIGIN");
         assert!(client["content-security-policy"]
             .to_str()
             .unwrap()
             .contains("frame-ancestors 'self'"));
+        assert!(!client["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("frame-src "));
+        let print_client = get_headers("/print-client").await;
+        assert_eq!(print_client["x-frame-options"], "DENY");
+        assert!(print_client["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("frame-src 'self' blob:"));
+        let frame_print_client = get_headers("/frame-print-client").await;
+        assert_eq!(frame_print_client["x-frame-options"], "SAMEORIGIN");
+        assert!(frame_print_client["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("frame-src 'self' blob:"));
     }
 
     #[test]
@@ -2217,12 +2300,18 @@ mod tests {
         assert!(sources.contains(&"'self'"), "img-src must allow 'self'");
         assert!(sources.contains(&"data:"), "img-src must allow data: URIs");
         assert!(sources.contains(&"blob:"), "img-src must allow blob: URLs");
-        let frame_src = directives
+        assert!(directives.iter().all(|d| !d.starts_with("frame-src ")));
+        let print_directives: Vec<&str> = PRINTABLE_CONTENT_SECURITY_POLICY
+            .split(';')
+            .map(str::trim)
+            .collect();
+        let print_frame_src = print_directives
             .iter()
             .find(|d| d.starts_with("frame-src "))
-            .expect("CSP must allow the hidden PDF frame used for printing");
-        let frame_sources: Vec<&str> = frame_src.split_whitespace().skip(1).collect();
-        assert!(frame_sources.contains(&"blob:"));
+            .expect("print CSP must allow the hidden PDF frame");
+        assert!(print_frame_src
+            .split_whitespace()
+            .any(|source| source == "blob:"));
         // The string continuation must not leave stray whitespace runs.
         assert!(!CONTENT_SECURITY_POLICY.contains("  "));
         assert!(!CONTENT_SECURITY_POLICY.contains('\n'));

@@ -487,6 +487,8 @@ pub struct Session {
     pub autohide_side_tabs: bool,
     /// Whether the browser should expose the session's file transfer drive.
     pub file_manager_enabled: bool,
+    /// Whether this session has RDP printer redirection enabled.
+    pub printing_enabled: bool,
 }
 
 /// A short-lived viewer token issued by an admin to shadow an active session.
@@ -1073,6 +1075,7 @@ impl SessionManager {
         // Tunnels the Proxmox branch establishes in-branch (PVE API + SPICE
         // proxy hops); merged into the session's tunnel list after the match.
         let mut proxmox_tunnels: Vec<tunnel::SshTunnel> = Vec::new();
+        let mut printing_enabled = false;
 
         let (
             mut conn_params,
@@ -1250,7 +1253,7 @@ impl SessionManager {
                     .rdp
                     .as_ref()
                     .is_some_and(|rdp| rdp.allow_printing);
-                let printing_enabled = printing_requested && printing_allowed;
+                printing_enabled = printing_requested && printing_allowed;
                 if printing_requested && !printing_allowed {
                     tracing::info!(%session_id, "Ignoring RDP printer redirection request because rdp.allow_printing is disabled");
                 }
@@ -2179,6 +2182,7 @@ impl SessionManager {
             reuse_fingerprint,
             autohide_side_tabs: req.autohide_side_tabs.unwrap_or(false),
             file_manager_enabled,
+            printing_enabled,
         };
 
         let info = session.info();
@@ -2287,6 +2291,20 @@ impl SessionManager {
         let session = sessions.get(&id)?;
         let session = session.lock().await;
         Some(session.info())
+    }
+
+    /// Return the session properties used to select client-page CSP policy:
+    /// fullscreen framing setting, whether it came from an address-book
+    /// entry, and whether RDP printer redirection is enabled.
+    pub async fn get_session_client_csp_flags(&self, id: Uuid) -> Option<(bool, bool, bool)> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(&id)?;
+        let session = session.lock().await;
+        Some((
+            session.fullscreen_on_connect,
+            session.address_book_entry.is_some(),
+            session.printing_enabled,
+        ))
     }
 
     /// Take the guacd stream from a session (for the owner/first WebSocket connection).
@@ -3487,6 +3505,7 @@ mod tests {
             reuse_fingerprint: String::new(),
             autohide_side_tabs: false,
             file_manager_enabled: true,
+            printing_enabled: false,
         }
     }
 
