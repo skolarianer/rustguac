@@ -24,6 +24,7 @@ const statuses = [];
 const elements = [];
 const timers = [];
 const printLogs = [];
+const streamAcks = [];
 let iframePrintCalls = 0;
 let iframeFocusCalls = 0;
 let blobReaderCount = 0;
@@ -85,8 +86,12 @@ client.getState = () => ctx.Guacamole.Client.State.CONNECTED;
 vm.createContext(ctx);
 vm.runInContext(html.slice(start, end), ctx);
 
-client.onfile({}, 'application/pdf', 'C:\\print\\invoice');
+const printStream = {
+    sendAck(message, status) { streamAcks.push({ message, status }); }
+};
+client.onfile(printStream, 'application/pdf', 'C:\\print\\invoice');
 assert.equal(blobReaderCount, 1);
+assert.deepEqual(streamAcks, [{ message: 'OK', status: 0 }]);
 reader.onend();
 const printFrame = elements.find(element => element.tagName === 'iframe');
 assert.ok(printFrame, 'a hidden frame should receive the PDF without showing it');
@@ -102,13 +107,13 @@ assert.equal(printLogs[0].url, '/api/sessions/session-id/print-job');
 assert.deepEqual(JSON.parse(printLogs[0].options.body), { filename: 'C:\\print\\invoice' });
 
 ctx.printingMethod = 'download';
-client.onfile({}, 'application/pdf', 'C:\\print\\report');
+client.onfile(printStream, 'application/pdf', 'C:\\print\\report');
 reader.onend();
 assert.deepEqual(downloads.at(-1), { href: 'blob:print-job', filename: 'C:\\print\\report' }, 'download mode should save the print PDF');
 assert.equal(iframePrintCalls, 1, 'download mode must not invoke the local print dialog');
 assert.equal(printLogs.length, 2, 'print jobs should be logged in either delivery mode');
 
-client.onfile({}, 'text/plain', 'notes.txt');
+client.onfile(printStream, 'text/plain', 'notes.txt');
 reader.onend();
 assert.deepEqual(downloads.at(-1), { href: 'blob:print-job', filename: 'notes.txt' });
 console.log('client-print-file: ok');
