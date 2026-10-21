@@ -1870,7 +1870,7 @@ impl SessionManager {
                     gateway_domain: None,
                     load_balance_info: None,
                     security: None,
-                    server_layout: None,
+                    server_layout: req.server_layout.clone(),
                     width,
                     height,
                     dpi,
