@@ -955,6 +955,11 @@
                         '<div id="ctrl-keys" style="display:flex;flex-wrap:wrap;gap:0.4em;"></div>' +
                     '</div>' +
                     '<div style="padding:0.8em 1em;border-top:1px solid var(--border);">' +
+                        '<div style="color:var(--text-muted);font-size:0.85em;margin-bottom:0.5em;letter-spacing:0.05em;">KEYBOARD</div>' +
+                        '<label style="display:flex;align-items:center;gap:0.5em;padding:0.25em 0;font-size:0.9em;cursor:pointer;"><input type="checkbox" id="ctrl-lock-keys"><span>Lock all keys in fullscreen</span></label>' +
+                        '<div id="ctrl-lock-keys-hint" style="color:var(--text-dim);font-size:0.75em;margin-top:0.4em;">In fullscreen, Win, Alt+Tab and other shortcuts go to the remote desktop instead of this computer. Hold Esc to leave fullscreen.</div>' +
+                    '</div>' +
+                    '<div style="padding:0.8em 1em;border-top:1px solid var(--border);">' +
                         '<div style="color:var(--text-muted);font-size:0.85em;margin-bottom:0.5em;letter-spacing:0.05em;">VIEW</div>' +
                         '<label style="display:flex;align-items:center;gap:0.5em;padding:0.25em 0;font-size:0.9em;cursor:pointer;"><input type="radio" name="ctrl-view" id="ctrl-view-fit" value="fit"><span>Fit to window</span></label>' +
                         '<label style="display:flex;align-items:center;gap:0.5em;padding:0.25em 0;font-size:0.9em;cursor:pointer;"><input type="radio" name="ctrl-view" id="ctrl-view-actual" value="actual"><span>Actual size, with scroll bars</span></label>' +
@@ -974,6 +979,14 @@
                     b.addEventListener('click', function() { sendKeyCombo(k.keys); });
                     keysEl.appendChild(b);
                 });
+                var lockKeys = document.getElementById('ctrl-lock-keys');
+                lockKeys.checked = lockAllKeys;
+                if (!rgKeyboardLockSupported()) {
+                    lockKeys.checked = false;
+                    lockKeys.disabled = true;
+                    document.getElementById('ctrl-lock-keys-hint').textContent = 'This browser can\'t capture system shortcuts. Chrome and Edge can.';
+                }
+                lockKeys.addEventListener('change', function() { rgSetLockAllKeys(lockKeys.checked); });
                 document.getElementById('ctrl-view-' + viewMode).checked = true;
                 ['fit', 'actual'].forEach(function(m) {
                     document.getElementById('ctrl-view-' + m).addEventListener('change', function(e) {
@@ -1583,6 +1596,7 @@
                         setFileStatus('Received file: ' + filename);
                     }
                 };
+                stream.sendAck('OK', Guacamole.Status.Code.SUCCESS);
             };
 
             function tracing_log(msg) {
@@ -1662,14 +1676,40 @@
             // (e.g. no user activation on load): the caller decides whether to
             // wait for a gesture or give up and show the windowed session.
             var fsKeyboardLocked = false;
+            // Lock all keys (#319): in fullscreen, send Win, Alt+Tab and the
+            // like to the remote desktop instead of this computer. Off, only
+            // Escape is locked, so a single press doesn't leave fullscreen.
+            // Remembered per browser; set from the Controls panel.
+            var lockAllKeys = false;
+            try { lockAllKeys = localStorage.getItem('rustguac_lock_all_keys') === '1'; } catch (e) {}
+            function rgKeyboardLockSupported() {
+                return !!(navigator.keyboard && navigator.keyboard.lock);
+            }
+            function rgSetLockAllKeys(on) {
+                lockAllKeys = !!on;
+                try {
+                    if (lockAllKeys) localStorage.setItem('rustguac_lock_all_keys', '1');
+                    else localStorage.removeItem('rustguac_lock_all_keys');
+                } catch (e) {}
+                if (rgFullscreenEl()) rgRequestKeyboardLock();
+            }
+            function rgRequestKeyboardLock() {
+                if (!rgKeyboardLockSupported()) { rgShowEscNoticeOnce(); return; }
+                var lockAll = lockAllKeys;
+                var request;
+                try {
+                    request = lockAll ? navigator.keyboard.lock() : navigator.keyboard.lock(['Escape']);
+                } catch (e) {
+                    request = Promise.reject(e);
+                }
+                request.catch(function() {
+                    if (!lockAll) rgShowEscNoticeOnce();
+                });
+            }
             function rgOnFullscreenEntered() {
                 if (fsKeyboardLocked) return;
                 fsKeyboardLocked = true;
-                if (navigator.keyboard && navigator.keyboard.lock) {
-                    navigator.keyboard.lock(['Escape']).catch(rgShowEscNoticeOnce);
-                } else {
-                    rgShowEscNoticeOnce();
-                }
+                rgRequestKeyboardLock();
             }
             function rgEnterFullscreen(onReject) {
                 var el = document.documentElement;
@@ -1825,7 +1865,7 @@
             function rgOnFullscreenChange() {
                 var inFs = !!rgFullscreenEl();
                 var bar = document.getElementById('fs-bar');
-                if (inFs) { fsEverEntered = true; rgDisarmFullscreenGesture(); rgOnFullscreenEntered(); rgReleaseAllInput(); rgMaybeReveal(); } else { rgHideConnectCover(); }
+                if (inFs) { fsEverEntered = true; rgDisarmFullscreenGesture(); rgOnFullscreenEntered(); rgReleaseAllInput(); rgMaybeReveal(); } else { fsKeyboardLocked = false; rgHideConnectCover(); }
                 if (bar) {
                     if (inFs) {
                         bar.classList.add('visible');
@@ -2063,7 +2103,10 @@
                     height: window.innerHeight,
                     screen_width: screen.width,
                     screen_height: screen.height,
-                    dpi: Math.round((window.devicePixelRatio || 1) * 96)
+                    dpi: Math.round((window.devicePixelRatio || 1) * 96),
+                    keyboard_layout: (function() {
+                        try { return localStorage.getItem('rustguac_keyboard_layout') || undefined; } catch (e) { return undefined; }
+                    })()
                 };
 
                 var url = '/api/addressbook/folders/' + encodeURIComponent(scope)

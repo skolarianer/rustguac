@@ -1869,7 +1869,7 @@ impl SessionManager {
                     password: Some(vdi_password),
                     domain: None,
                     security: None,
-                    server_layout: None,
+                    server_layout: req.server_layout.clone(),
                     width,
                     height,
                     dpi,
